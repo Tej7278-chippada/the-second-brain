@@ -23,6 +23,7 @@ class Settings:
     # AI Model Settings
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     LLM_MODEL: str = "gpt-4"
+    # GROQ_MODEL: str = "llama-3.1-70b-versatile"  # to set default model for GROQ API usage
     
     # Real-time Processing
     REAL_TIME_ENABLED: bool = True
