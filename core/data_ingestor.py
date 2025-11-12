@@ -1,3 +1,4 @@
+# core/data_ingestor.py
 import os
 import PyPDF2
 import docx

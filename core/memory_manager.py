@@ -1,3 +1,4 @@
+# core/memory_manager.py
 import json
 import os
 from typing import Dict, List, Any, Optional

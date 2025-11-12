@@ -1,3 +1,4 @@
+# interfaces/chat_interface.py
 class ChatInterface:
     def __init__(self, second_brain):
         self.brain = second_brain

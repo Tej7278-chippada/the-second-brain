@@ -1,3 +1,4 @@
+# core/vector_store.py
 import chromadb
 from chromadb.config import Settings
 from typing import List, Dict, Any
