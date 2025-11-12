@@ -78,6 +78,10 @@ class SecondBrain:
             'query': question,
             'timestamp': 'now'
         })
+
+        # Export memories to vector store BEFORE searching
+        # This ensures both documents and memories are available for context
+        self.memory_manager.export_memories_to_vector(self.vector_store)
         
         # Search vector store
         search_results = self.vector_store.search(question, n_results=5)

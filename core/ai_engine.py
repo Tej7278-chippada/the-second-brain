@@ -166,7 +166,7 @@ Please provide a helpful response based on the user's query and available contex
         
         # Check for recall commands - more comprehensive patterns
         recall_patterns = [
-            # Direct questions
+            # Direct questions about USER'S personal info
             (r'what is my (.*)', 'personal_info'),
             (r'what\'s my (.*)', 'personal_info'),
             (r'show me my (.*)', 'personal_info'),
@@ -174,15 +174,15 @@ Please provide a helpful response based on the user's query and available contex
             (r'what are my (.*)', 'personal_info'),
             (r'give me my (.*)', 'personal_info'),
             
-            # Specific items with flexible matching
-            (r'.*phone number.*', 'personal_info', 'phone_number'),
-            (r'.*aadhaar.*', 'personal_info', 'aadhaar_number'),
-            (r'.*aadhar.*', 'personal_info', 'aadhaar_number'),
-            (r'.*address.*', 'personal_info', 'address'),
-            (r'.*email.*', 'personal_info', 'email'),
-            (r'.*license.*', 'personal_info', 'license'),
-            (r'.*password.*', 'credentials', None),
-            (r'.*username.*', 'credentials', None),
+            # Specific personal items with flexible matching
+            (r'.*my phone number.*', 'personal_info', 'phone_number'),
+            (r'.*my aadhaar.*', 'personal_info', 'aadhaar_number'),
+            (r'.*my aadhar.*', 'personal_info', 'aadhaar_number'),
+            (r'.*my address.*', 'personal_info', 'address'),
+            (r'.*my email.*', 'personal_info', 'email'),
+            (r'.*my license.*', 'personal_info', 'license'),
+            (r'.*my password.*', 'credentials', None),
+            (r'.*my username.*', 'credentials', None),
             
             # Generic "my X" pattern
             (r'my (.*)', 'personal_info'),
@@ -494,6 +494,11 @@ Please provide a helpful response based on the user's query and available contex
             
             # Special handling for contact queries
             if any(word in query.lower() for word in ['phone', 'contact', 'number', 'call']):
+                # Check if this is about someone else's contact (not "my phone")
+                if not any(phrase in query_lower for phrase in ['my phone', 'my number', 'my contact']):
+                    # This might be about someone else's contact info from documents
+                    # Let the main AI engine handle it with document context first
+                    return None
                 contacts = self.memory_manager.get_all_contacts()
                 if contacts:
                     contact_list = []

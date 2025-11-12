@@ -401,8 +401,16 @@ class MemoryManager:
             
             memories_text = "PERSONAL MEMORIES AND INFORMATION:\n\n"
             
+            # Add a clear header that these are USER'S personal memories
+            memories_text += "=== USER'S PERSONAL INFORMATION ===\n"
+            memories_text += "This section contains the user's own personal details, not contact information of other people.\n\n"
+            
             for category_name, category_data in self.memories.items():
                 if category_data:  # Only include non-empty categories
+                    # Skip contacts category to avoid overriding document contacts
+                    if category_name == 'contacts':
+                        continue
+                        
                     memories_text += f"=== {category_name.upper()} ===\n"
                     for key, memory in category_data.items():
                         memories_text += f"- {key}: {memory['value']}"
@@ -419,7 +427,8 @@ class MemoryManager:
                         'file_name': 'personal_memories',
                         'file_type': '.memory',
                         'ingestion_time': datetime.now().isoformat(),
-                        'file_size': len(memories_text)
+                        'file_size': len(memories_text),
+                        'is_personal_memory': True  # Add flag to identify personal memories
                     },
                     'chunks': [memories_text]  # Single chunk for memories
                 }
