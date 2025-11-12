@@ -4,6 +4,7 @@ from typing import Dict, Any
 from core.data_ingestor import DataIngestor
 from core.vector_store import VectorStore
 from core.ai_engine import AIEngine
+from core.memory_manager import MemoryManager
 from interfaces.chat_interface import ChatInterface
 from utils.data_visualizer import DataVisualizer
 from utils.data_manager import DataManager
@@ -14,10 +15,15 @@ class SecondBrain:
         # Validate settings
         settings.validate()
         
-        # Initialize core components
+        # Initialize core components in correct order
         self.data_ingestor = DataIngestor(settings)
         self.vector_store = VectorStore(settings)
+        self.memory_manager = MemoryManager(settings)
+        
+        # Initialize AI Engine with memory manager
         self.ai_engine = AIEngine(settings)
+        self.ai_engine.memory_manager = self.memory_manager  # Set memory manager after initialization
+        self.ai_engine.vector_store = self.vector_store  # Set vector store for memory exports
         
         # Initialize management tools
         self.visualizer = DataVisualizer(self.vector_store)
@@ -31,7 +37,9 @@ class SecondBrain:
         
         print("🚀 The Second Brain initialized successfully!")
         stats = self.vector_store.get_collection_stats()
+        memory_stats = self.memory_manager.get_memory_stats()
         print(f"📊 Vector store contains {stats['count']} document chunks")
+        print(f"💾 Memory system contains {memory_stats['total_memories']} personal memories")
     
     def ingest_data(self, file_path: str, metadata: Dict = None):
         """Ingest new data into the system"""
@@ -140,34 +148,106 @@ class SecondBrain:
                 break
             else:
                 print("❌ Invalid choice")
+    
+    def show_memories(self):
+        """Show all stored memories with better organization"""
+        memories = self.memory_manager.list_memories()
+        stats = self.memory_manager.get_memory_stats()
+        
+        print("\n💾 PERSONAL MEMORIES")
+        print("=" * 60)
+        print(f"Total memories: {stats['total_memories']}")
+        
+        # Show borrowed items
+        items_to_return = self.memory_manager.get_items_to_return()
+        items_to_receive = self.memory_manager.get_items_to_receive()
+        
+        if items_to_return:
+            print(f"\n📦 ITEMS YOU NEED TO RETURN:")
+            for item in items_to_return:
+                item_name = item['original_key'].split('_')[0]
+                person = item['original_key'].split('_')[1]
+                print(f"   • {item_name} to {person.title()}")
+        
+        if items_to_receive:
+            print(f"\n📥 ITEMS OTHERS NEED TO RETURN TO YOU:")
+            for item in items_to_receive:
+                item_name = item['original_key'].split('_')[0]
+                person = item['original_key'].split('_')[1]
+                print(f"   • {item_name} from {person.title()}")
+        
+        # Show debts separately
+        debts = self.memory_manager.get_all_debts()
+        if debts:
+            print(f"\n💰 DEBTS OWED TO YOU:")
+            for debt in debts:
+                person = debt['original_key'].replace('_debt', '')
+                amount = debt['memory']['value']
+                print(f"   • {person.title()}: {amount} rupees")
+        
+        # Show contacts separately
+        contacts = self.memory_manager.get_all_contacts()
+        if contacts:
+            print(f"\n📞 CONTACTS:")
+            for contact in contacts:
+                name = contact['original_key'].replace('_phone', '')
+                phone = contact['memory']['value']
+                print(f"   • {name.title()}: {phone}")
+        
+        # Show other memories by category
+        for category, items in memories.items():
+            if items and category not in ['financial', 'contacts', 'borrowed_items']:
+                print(f"\n📁 {category.upper()}:")
+                for key, memory in items.items():
+                    display_key = memory.get('original_key', key)
+                    print(f"   🔑 {display_key}: {memory['value']}")
+                    if memory.get('description'):
+                        print(f"      📝 {memory['description']}")
+        # Instructions to delete memories
+        print("\n🗑️ To delete any memory: forget <memory_key> (ex: forget reminder_3230)")
+        # print(f"To delete any memory: forget <memory_key> (ex: forget john_phone)")
+    
+    def memorize_information(self, command: str) -> bool:
+        """Handle memorize commands directly"""
+        return self.ai_engine._handle_memorize_command(command) is not None
 
-    def interactive_chat_with_management(self):
-        """Enhanced chat interface with management commands"""
-        print("\n" + "="*60)
-        print("🤖 The Second Brain - Enhanced Chat Mode")
-        print("="*60)
+    def interactive_chat_with_memory_management(self):
+        """Enhanced chat interface with memory management commands"""
+        print("\n" + "="*70)
+        print("🤖 The Second Brain - Memory Enhanced Chat Mode")
+        print("="*70)
         print("Chat Commands:")
         print("  - 'exit', 'quit', 'bye' to exit")
         print("  - 'ingest <file_path>' to add files")
         print("  - 'show data' to view all documents")
+        print("  - 'show memories' to view personal memories")
         print("  - 'manage data' to open management menu")
         print("  - 'delete <filename>' to delete specific file")
+        print("  - 'forget <memory_key>' to remove memory")
         print("  - 'search <term>' to search documents")
         print("  - 'clear' to clear conversation history")
-        print("="*60)
+        print("\nMemory Commands:")
+        print("  - 'memorize my phone number as 1234567890'")
+        print("  - 'remember that my Aadhaar is 1234-5678-9012'")
+        print("  - 'store this: my license plate is ABC123'")
+        print("  - 'what's my phone number?'")
+        print("  - 'show me my Aadhaar details'")
+        print("="*70)
         
         while True:
             try:
                 user_input = input("\n🧠 You: ").strip()
                 
                 if user_input.lower() in ['exit', 'quit', 'bye']:
-                    print("👋 Goodbye! Your knowledge is safely stored.")
+                    print("👋 Goodbye! Your knowledge and memories are safely stored.")
                     break
                 elif user_input.lower() == 'clear':
                     self.conversation_history = []
                     print("🗑️ Conversation history cleared.")
                 elif user_input.lower() == 'show data':
                     self.show_data()
+                elif user_input.lower() == 'show memories':
+                    self.show_memories()
                 elif user_input.lower() == 'manage data':
                     self.manage_data()
                 elif user_input.startswith('ingest '):
@@ -176,6 +256,9 @@ class SecondBrain:
                 elif user_input.startswith('delete '):
                     filename = user_input[7:].strip()
                     self.manager.delete_document(filename)
+                elif user_input.startswith('forget '):
+                    memory_key = user_input[7:].strip()
+                    self.memory_manager.forget(memory_key)
                 elif user_input.startswith('search '):
                     search_term = user_input[7:].strip()
                     results = self.visualizer.search_documents(search_term)
@@ -235,8 +318,8 @@ Database will be PostgreSQL with Redis for caching."""
         # Show initial data
         brain.show_data()
         
-        # Start interactive chat with management options
-        brain.interactive_chat_with_management()
+        # Start interactive chat with memory management features
+        brain.interactive_chat_with_memory_management()
         # brain.interactive_chat()
         
     except Exception as e:

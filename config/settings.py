@@ -15,6 +15,11 @@ class Settings:
     # Vector Database
     VECTOR_DB_PATH: str = "data/vector_store"
     CHROMA_PERSIST_DIR: str = "data/chroma_db"
+
+    # Memory System
+    MEMORY_ENCRYPTION: bool = False  # For future encryption feature
+    MEMORY_BACKUP: bool = True
+    AUTO_EXPORT_MEMORIES: bool = True  # Auto export memories to vector store
     
     # File Storage
     UPLOAD_FOLDER: str = "data/uploads"
