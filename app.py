@@ -12,7 +12,7 @@ sys.path.append(str(second_brain_path))
 from main import SecondBrain
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=["http://localhost:3000", "http://192.168.192.172:3000", "http://127.0.0.1:3000"])
 
 # Initialize Second Brain
 try:
@@ -175,4 +175,4 @@ def search_documents():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8000)
+    app.run(debug=True, port=8000, host='0.0.0.0')
