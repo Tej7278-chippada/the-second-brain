@@ -4,6 +4,9 @@ from flask_cors import CORS
 import os
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Add the Second Brain project to path
 second_brain_path = Path(__file__).parent.parent / "second-brain"
@@ -12,7 +15,7 @@ sys.path.append(str(second_brain_path))
 from main import SecondBrain
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000", "http://192.168.192.172:3000", "http://127.0.0.1:3000"])
+CORS(app, origins=["http://localhost:3000", "http://192.168.170.172:3000", "http://127.0.0.1:3000", "https://thesecondbrain.netlify.app"])
 
 # Initialize Second Brain
 try:
@@ -175,4 +178,5 @@ def search_documents():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8000, host='0.0.0.0')
+    port = int(os.environ.get('PORT', 8000))
+    app.run(host='0.0.0.0', port=port, debug=False)
