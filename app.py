@@ -12,7 +12,7 @@ sys.path.append(str(second_brain_path))
 from main import SecondBrain
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000", "http://192.168.192.172:3000", "http://127.0.0.1:3000"])
+CORS(app, origins=["http://localhost:3001", "http://192.168.163.172:3001", "http://127.0.0.1:3001"])
 
 # Initialize Second Brain
 try:
