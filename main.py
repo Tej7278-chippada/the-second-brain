@@ -34,7 +34,10 @@ class SecondBrain:
         self.chat_interface = ChatInterface(self)
         
         # Conversation history
-        self.conversation_history = []
+        # self.conversation_history = []
+
+        # User-specific conversation history
+        self.user_conversations = {}
         
         print("🚀 The Second Brain initialized successfully!")
         stats = self.vector_store.get_collection_stats()
@@ -69,14 +72,27 @@ class SecondBrain:
                 print(f"❌ Failed to add to vector store: {file_path}")
         else:
             print(f"❌ Failed to process: {file_path}")
+
+    def get_user_history(self, user_id):
+        """Get conversation history for a specific user"""
+        if user_id not in self.user_conversations:
+            self.user_conversations[user_id] = []
+        return self.user_conversations[user_id]
     
-    def query(self, question: str, use_history: bool = True) -> Dict[str, Any]:
-        """Query The Second Brain"""
-        print(f"🔍 Searching knowledge base...")
+    def query(self, question: str, use_history: bool = True, user_id: str = None) -> Dict[str, Any]:
+        """Query The Second Brain with user context"""
+        print(f"🔍 {'User ' + user_id if user_id else 'Anonymous'} querying: {question[:50]}...")
+
+        # Get user-specific conversation history
+        if user_id and use_history:
+            conversation_history = self.get_user_history(user_id)
+        else:
+            conversation_history = None
         
         # Track this query action
         self.ai_engine.add_recent_action('query', {
             'query': question,
+            'user_id': user_id,
             'timestamp': 'now'
         })
 
@@ -88,16 +104,21 @@ class SecondBrain:
         search_results = self.vector_store.search(question, n_results=5)
         
         # Generate response
-        history = self.conversation_history if use_history else None
-        response = self.ai_engine.generate_response(question, search_results, history)
+        # history = self.conversation_history if use_history else None
+        response = self.ai_engine.generate_response(question, search_results, conversation_history)
         
         # Update conversation history
-        self.conversation_history.append({"role": "user", "content": question})
-        self.conversation_history.append({"role": "assistant", "content": response['response']})
+        # self.conversation_history.append({"role": "user", "content": question})
+        # self.conversation_history.append({"role": "assistant", "content": response['response']})
         
-        # Keep history manageable
-        if len(self.conversation_history) > 20:
-            self.conversation_history = self.conversation_history[-20:]
+        # Update user-specific conversation history
+        if user_id:
+            self.user_conversations[user_id].append({"role": "user", "content": question})
+            self.user_conversations[user_id].append({"role": "assistant", "content": response['response']})
+            
+            # Keep history manageable
+            if len(self.user_conversations[user_id]) > 20:
+                self.user_conversations[user_id] = self.user_conversations[user_id][-20:]
         
         return response
     

@@ -4,23 +4,38 @@ from flask_cors import CORS
 import os
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
+from datetime import datetime
+
+# Load environment variables
+load_dotenv()
 
 # Add the Second Brain project to path
 second_brain_path = Path(__file__).parent.parent / "second-brain"
 sys.path.append(str(second_brain_path))
 
 from main import SecondBrain
+from auth.routes import auth_bp
+from auth.utils import token_required
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3001", "http://192.168.163.172:3001", "http://127.0.0.1:3001"])
+CORS(app, origins=["http://localhost:3001", "http://192.168.96.172:3001", "http://127.0.0.1:3001", "http://localhost:8000", "https://thesecondbrain.netlify.app/"])
+
+# Set maximum file upload size (50MB)
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+
+# Register auth blueprint
+app.register_blueprint(auth_bp)
 
 # Initialize Second Brain
 try:
     brain = SecondBrain()
-    print("✅ Second Brain initialized successfully")
+    print(f"✅ Second Brain initialized successfully at {datetime.now()}")
 except Exception as e:
     print(f"❌ Failed to initialize Second Brain: {e}")
     brain = None
+
+# ==================== PUBLIC ROUTES ====================
 
 @app.route('/status', methods=['GET'])
 def get_status():
@@ -36,8 +51,12 @@ def get_status():
         'is_connected': True
     })
 
+# ==================== PROTECTED ROUTES ====================
+
 @app.route('/query', methods=['POST'])
+@token_required
 def query():
+    """Protected query endpoint"""
     if not brain:
         return jsonify({'error': 'Second Brain not initialized'}), 500
     
@@ -49,13 +68,19 @@ def query():
         return jsonify({'error': 'No question provided'}), 400
     
     try:
-        response = brain.query(question, use_history=use_history)
+        # Pass user ID to Second Brain for user-specific processing, Get user ID from auth middleware
+        user_id = request.user_id
+        print(f"🔍 User {user_id} querying: {question[:50]}...")
+        response = brain.query(question, use_history=use_history, user_id=user_id)
         return jsonify(response)
     except Exception as e:
+        print(f"❌ Query error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/ingest', methods=['POST'])
+@token_required
 def ingest_file():
+    """Protected file upload endpoint"""
     if not brain:
         return jsonify({'error': 'Second Brain not initialized'}), 500
     
@@ -66,22 +91,31 @@ def ingest_file():
     if file.filename == '':
         return jsonify({'error': 'No file selected'}), 400
     
-    # Save file temporarily
-    upload_dir = Path("uploads")
-    upload_dir.mkdir(exist_ok=True)
-    file_path = upload_dir / file.filename
-    file.save(file_path)
+    # Save file temporarily with user ID in path
+    user_id = request.user_id
+    upload_dir = Path(f"data/uploads/user_{user_id}")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Secure filename
+    from werkzeug.utils import secure_filename
+    filename = secure_filename(file.filename)
+    file_path = upload_dir / filename
     
     try:
+        file.save(file_path)
+        
+        # Ingest with user context
         brain.ingest_data(str(file_path))
         # Get the result to return chunk count
         result = brain.data_ingestor.ingest_file(str(file_path))
         return jsonify({
             'success': True,
-            'filename': file.filename,
-            'chunks': len(result['chunks']) if result else 0
+            'filename': filename,
+            'chunks': len(result['chunks']) if result else 0,
+            'message': f'Successfully ingested {filename}'
         })
     except Exception as e:
+        print(f"❌ Ingest error: {e}")
         return jsonify({'error': str(e)}), 500
     finally:
         # Clean up
@@ -89,7 +123,9 @@ def ingest_file():
             file_path.unlink()
 
 @app.route('/memories', methods=['GET'])
+@token_required
 def get_memories():
+    """Get user's memories"""
     if not brain:
         return jsonify({'error': 'Second Brain not initialized'}), 500
     
@@ -110,7 +146,9 @@ def get_memories():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/memories', methods=['POST'])
+@token_required
 def add_memory():
+    """Add a new memory"""
     if not brain:
         return jsonify({'error': 'Second Brain not initialized'}), 500
     
@@ -127,7 +165,9 @@ def add_memory():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/memories/<memory_key>', methods=['DELETE'])
+@token_required
 def delete_memory(memory_key):
+    """Delete a memory"""
     if not brain:
         return jsonify({'error': 'Second Brain not initialized'}), 500
     
@@ -138,7 +178,9 @@ def delete_memory(memory_key):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/documents', methods=['GET'])
+@token_required
 def get_documents():
+    """Get user's documents"""
     if not brain:
         return jsonify({'error': 'Second Brain not initialized'}), 500
     
@@ -149,7 +191,9 @@ def get_documents():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/documents/<filename>', methods=['DELETE'])
+@token_required
 def delete_document(filename):
+    """Delete a document"""
     if not brain:
         return jsonify({'error': 'Second Brain not initialized'}), 500
     
@@ -160,7 +204,9 @@ def delete_document(filename):
         return jsonify({'error': str(e)}), 500
 
 @app.route('/search', methods=['GET'])
+@token_required
 def search_documents():
+    """Search documents"""
     if not brain:
         return jsonify({'error': 'Second Brain not initialized'}), 500
     
@@ -173,6 +219,40 @@ def search_documents():
         return jsonify({'results': results})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
+# ==================== ERROR HANDLERS ====================
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Endpoint not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({'error': 'Internal server error'}), 500
+
+@app.errorhandler(413)
+def too_large(error):
+    return jsonify({'error': 'File too large (max 50MB)'}), 413
+
+# ==================== MAIN ====================
 
 if __name__ == '__main__':
+    # Check required environment variables
+    required_vars = ['MONGO_URI', 'JWT_SECRET', 'GOOGLE_CLIENT_ID']
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+    
+    if missing_vars:
+        print(f"❌ Missing environment variables: {missing_vars}")
+        print("💡 Create a .env file with these variables")
+        sys.exit(1)
+    
+    # Create necessary directories
+    Path("data/uploads").mkdir(parents=True, exist_ok=True)
+    Path("data/processed").mkdir(parents=True, exist_ok=True)
+    Path("data/chroma_db").mkdir(parents=True, exist_ok=True)
+    
+    print(f"🚀 Starting Second Brain API on http://0.0.0.0:8000")
+    print(f"📁 Data directory: {Path('data').absolute()}")
+    print(f"🔐 Auth enabled: Yes")
+    
     app.run(debug=True, port=8000, host='0.0.0.0')
