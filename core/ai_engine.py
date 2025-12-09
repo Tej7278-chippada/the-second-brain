@@ -28,6 +28,9 @@ class AIEngine:
         
         # Track recent actions
         self.recent_actions = []
+
+        # Track recent actions per user
+        self.user_recent_actions = {}  # user_id -> list of actions
         
     def _test_groq_connection(self):
         """Test Groq connection and list available models"""
@@ -67,55 +70,56 @@ class AIEngine:
         """Set vector store for memory exports"""
         self.vector_store = vector_store
 
-    def add_recent_action(self, action: str, details: Dict):
+    def add_user_recent_action(self, user_id: str, action: str, details: Dict):
         """Track recent user actions for context"""
-        self.recent_actions.append({
+        if user_id not in self.user_recent_actions:
+            self.user_recent_actions[user_id] = []
+        
+        self.user_recent_actions[user_id].append({
             'timestamp': datetime.now().isoformat(),
             'action': action,
             'details': details
         })
-        # Keep only last 10 actions
-        if len(self.recent_actions) > 10:
-            self.recent_actions = self.recent_actions[-10:]
-
-    def generate_response(self, query: str, context: List[Dict], conversation_history: List[Dict] = None) -> Dict[str, Any]:
-        """Generate response using context from vector store"""
+        
+        # Keep only last 10 actions per user
+        if len(self.user_recent_actions[user_id]) > 10:
+            self.user_recent_actions[user_id] = self.user_recent_actions[user_id][-10:]
+    
+    def generate_response(self, query: str, context: List[Dict], conversation_history: List[Dict] = None, user_id: str = None) -> Dict[str, Any]:
+        """Generate response using context from vector store with user isolation"""
         try:
             # Check if this is a memory-related query
-            memory_result = self._check_memory_query(query)
+            memory_result = self._check_memory_query(query, user_id)
             if memory_result:
                 return memory_result
             
             # Enhanced context preparation with recent actions
-            enhanced_context = self._enhance_context_with_recent_actions(context, query)
+            enhanced_context = self._enhance_context_with_recent_actions(context, query, user_id)
             
             # Prepare context from search results
             context_text = self._prepare_context(enhanced_context)
             
-            # Prepare conversation history
-            history_text = self._prepare_conversation_history(conversation_history)
+            # Prepare conversation history with user-specific context
+            history_text = self._prepare_conversation_history(conversation_history, user_id)
             
-            # Enhanced system prompt with memory instructions
-            system_prompt = """You are "The Second Brain" - a personal AI assistant that has access to all of the user's personal and professional information. 
+            # Enhanced system prompt with user context
+            system_prompt = f"""You are "The Second Brain" - a personal AI assistant that has access to all of the user's personal and professional information. 
             Your role is to help the user recall information, make connections between different pieces of knowledge, and provide intelligent responses based on their complete digital memory.
 
-SPECIAL MEMORY FEATURES:
-- The user can ask you to memorize information using commands like "memorize", "remember this", "store this"
+USER CONTEXT: You are responding to user: {user_id if user_id else 'Anonymous User'}
+
+IMPORTANT: When referring to "your" or "you" in the conversation, always refer to the user's own information. The user only has access to their own documents and memories.
+
+MEMORY GUIDELINES:
+- The user can ask you to memorize their personal information
 - You have access to the user's personal memories (phone numbers, IDs, important info)
 - When user asks about personal information, check the memory system first
+- Never reference other users' information
 
-MEMORY COMMANDS USER CAN USE:
-- "memorize my phone number as 1234567890"
-- "remember that my Aadhaar number is XXXX-XXXX-XXXX" 
-- "store this: my car license plate is ABC123"
-- "what's my phone number?"
-- "show me my Aadhaar details"
-
-SPECIAL INSTRUCTIONS FOR IMAGES:
-- When user asks about "last given pic", "recent image", "previous image", etc., refer to the most recently ingested image
-- When describing images, use the extracted OCR text and file metadata
-- If multiple images exist, mention the most recent one first
-- Provide detailed descriptions based on available text content
+CONVERSATION HISTORY:
+- Only reference the current user's conversation history
+- If user asks "what was my last question", refer to their own conversation history
+- Do not reference questions from other users
 
 GENERAL GUIDELINES:
 - Be precise and factual based on the context provided
@@ -123,12 +127,12 @@ GENERAL GUIDELINES:
 - Make connections between different pieces of information when relevant
 - Maintain a helpful, professional tone
 - Reference specific file names when discussing documents or images"""
-
+            
             # Construct the enhanced prompt
             prompt = f"""{history_text}
 
 Recent User Actions:
-{self._prepare_recent_actions()}
+{self._prepare_user_recent_actions(user_id)}
 
 Current Query: {query}
 
@@ -152,10 +156,38 @@ Please provide a helpful response based on the user's query and available contex
                 'sources': [],
                 'confidence': 0.0
             }
+    
+    def _prepare_conversation_history(self, history: List[Dict], user_id: str = None) -> str:
+        """Prepare conversation history with user context"""
+        if not history:
+            if user_id and user_id != "anonymous":
+                return f"User {user_id}'s conversation history is empty. This is the start of the conversation."
+            return "No previous conversation in this session."
         
-    def _check_memory_query(self, query: str) -> Optional[Dict[str, Any]]:
-        """Check if query is about memorizing or recalling information"""
-        if not self.memory_manager:
+        history_text = "PREVIOUS CONVERSATION (User's own history):\n"
+        for msg in history[-4:]:  # Last 4 messages for context
+            role = "USER" if msg['role'] == 'user' else "ASSISTANT"
+            history_text += f"{role}: {msg['content']}\n"
+        
+        return history_text
+    
+    def _prepare_user_recent_actions(self, user_id: str = None) -> str:
+        """Prepare recent actions for a specific user"""
+        if not user_id or user_id not in self.user_recent_actions or not self.user_recent_actions[user_id]:
+            return "No recent actions recorded for this user."
+        
+        actions_text = f"Recent Actions for User {user_id} (most recent first):\n"
+        for i, action in enumerate(reversed(self.user_recent_actions[user_id][-3:])):  # Last 3 actions
+            if action['action'] == 'ingest':
+                actions_text += f"- Ingested file: {action['details'].get('file_name', 'Unknown')} ({action['details'].get('file_type', 'Unknown type')})\n"
+            elif action['action'] == 'query':
+                actions_text += f"- Asked: {action['details'].get('query', 'Unknown')}\n"
+        
+        return actions_text
+        
+    def _check_memory_query(self, query: str, user_id: str = None) -> Optional[Dict[str, Any]]:
+        """Check if query is about memorizing or recalling information with user context"""
+        if not self.memory_manager or not user_id:
             return None
         
         query_lower = query.lower().strip()
@@ -163,19 +195,16 @@ Please provide a helpful response based on the user's query and available contex
         # Check for memorize commands
         memorize_keywords = ['memorize', 'remember this', 'store this', 'save this', 'remember my', 'memorize my']
         if any(keyword in query_lower for keyword in memorize_keywords):
-            return self._handle_memorize_command(query)
+            return self._handle_memorize_command(query, user_id)
         
-        # Check for recall commands - more comprehensive patterns
+        # Check for recall commands
         recall_patterns = [
-            # Direct questions about USER'S personal info
             (r'what is my (.*)', 'personal_info'),
             (r'what\'s my (.*)', 'personal_info'),
             (r'show me my (.*)', 'personal_info'),
             (r'tell me my (.*)', 'personal_info'),
             (r'what are my (.*)', 'personal_info'),
             (r'give me my (.*)', 'personal_info'),
-            
-            # Specific personal items with flexible matching
             (r'.*my phone number.*', 'personal_info', 'phone_number'),
             (r'.*my aadhaar.*', 'personal_info', 'aadhaar_number'),
             (r'.*my aadhar.*', 'personal_info', 'aadhaar_number'),
@@ -184,8 +213,6 @@ Please provide a helpful response based on the user's query and available contex
             (r'.*my license.*', 'personal_info', 'license'),
             (r'.*my password.*', 'credentials', None),
             (r'.*my username.*', 'credentials', None),
-            
-            # Generic "my X" pattern
             (r'my (.*)', 'personal_info'),
         ]
         
@@ -194,19 +221,17 @@ Please provide a helpful response based on the user's query and available contex
             if match:
                 key = extra[0] if extra else None
                 if not key:
-                    # Extract the key from the pattern match
                     if len(match.groups()) > 0:
                         key = match.group(1).replace(' ', '_')
                     else:
-                        # If no group captured, use the entire matched string
                         key = match.group(0).replace(' ', '_')
                 
-                return self._handle_recall_command(query, category, key)
+                return self._handle_recall_command(query, category, key, user_id)
         
         return None
-
-    def _handle_memorize_command(self, query: str) -> Dict[str, Any]:
-        """Handle commands to memorize information with better parsing"""
+    
+    def _handle_memorize_command(self, query: str, user_id: str) -> Dict[str, Any]:
+        """Handle commands to memorize information for a specific user"""
         try:
             if not self.memory_manager:
                 return {
@@ -264,7 +289,7 @@ Please provide a helpful response based on the user's query and available contex
                         
                         # Create a meaningful key
                         key = f"reminder_{hash(content) % 10000}"
-                        success = self.memory_manager.memorize("important_notes", key, content, f"Reminder: {query}")
+                        success = self.memory_manager.memorize(user_id, "important_notes", key, content, f"Reminder: {query}")
                         if success:
                             return {
                                 'response': f"✅ I've set a reminder: '{content}'",
@@ -276,7 +301,7 @@ Please provide a helpful response based on the user's query and available contex
                         item = match.group(1).strip()
                         person = match.group(2).strip()
                         notes = "Need to return it"
-                        success = self.memory_manager.memorize_borrowed_item(item, person, "borrowed_from", notes)
+                        success = self.memory_manager.memorize_borrowed_item(user_id, item, person, "borrowed_from", notes)
                         if success:
                             return {
                                 'response': f"✅ I've recorded that you borrowed '{item}' from {person}. I'll remind you to return it.",
@@ -288,7 +313,7 @@ Please provide a helpful response based on the user's query and available contex
                             item = match.group(1).strip()
                             person = match.group(2).strip()
                             notes = "Need to get it back"
-                            success = self.memory_manager.memorize_borrowed_item(item, person, "lent_to", notes)
+                            success = self.memory_manager.memorize_borrowed_item(user_id, item, person, "lent_to", notes)
                             if success:
                                 return {
                                     'response': f"✅ I've recorded that you lent '{item}' to {person}. I'll remind you to get it back.",
@@ -299,7 +324,7 @@ Please provide a helpful response based on the user's query and available contex
                     elif memory_type == 'contact':
                         name = match.group(1)
                         phone = match.group(2)
-                        success = self.memory_manager.memorize_contact(name, phone)
+                        success = self.memory_manager.memorize_contact(user_id, name, phone)
                         if success:
                             return {
                                 'response': f"✅ I've stored {name}'s phone number: {phone}",
@@ -310,7 +335,7 @@ Please provide a helpful response based on the user's query and available contex
                     elif memory_type == 'debt':
                         person = match.group(1)
                         amount = match.group(2)
-                        success = self.memory_manager.memorize_debt(person, float(amount))
+                        success = self.memory_manager.memorize_debt(user_id, person, float(amount))
                         if success:
                             return {
                                 'response': f"✅ I've recorded that {person} owes you {amount} rupees",
@@ -326,7 +351,7 @@ Please provide a helpful response based on the user's query and available contex
                             key = match.group(1)
                             value = match.group(2)
                         
-                        success = self.memory_manager.memorize("personal_info", key, value.strip())
+                        success = self.memory_manager.memorize(user_id, "personal_info", key, value.strip())
                         if success:
                             return {
                                 'response': f"✅ I've memorized your {key}: {value.strip()}",
@@ -351,7 +376,7 @@ Please provide a helpful response based on the user's query and available contex
                     key_base = "_".join(words).lower()
                     key = f"note_{key_base}_{hash(content) % 1000}"
                     
-                    success = self.memory_manager.memorize("important_notes", key, content, f"User note: {query}")
+                    success = self.memory_manager.memorize(user_id, "important_notes", key, content, f"User note: {query}")
                     if success:
                         return {
                             'response': f"✅ I've stored: '{content}'",
@@ -398,8 +423,8 @@ Please provide a helpful response based on the user's query and available contex
                 'confidence': 0.0
             }
 
-    def _handle_recall_command(self, query: str, category: str, key: str) -> Dict[str, Any]:
-        """Handle commands to recall information from memory with better search"""
+    def _handle_recall_command(self, query: str, category: str, key: str, user_id: str) -> Dict[str, Any]:
+        """Handle commands to recall information from memory for a specific user"""
         try:
             if not self.memory_manager:
                 return {
@@ -412,7 +437,7 @@ Please provide a helpful response based on the user's query and available contex
             
             # Special handling for reminder/meeting queries
             if any(word in query_lower for word in ['meeting', 'reminder', 'appointment', 'schedule', 'call', 'todo']):
-                notes = self.memory_manager.list_memories_by_category("important_notes")
+                notes = self.memory_manager.list_memories_by_category(user_id, "important_notes")
                 if notes:
                     relevant_notes = []
                     for note in notes:
@@ -435,8 +460,8 @@ Please provide a helpful response based on the user's query and available contex
             
             # Special handling for borrowed items queries
             if any(word in query_lower for word in ['borrow', 'lend', 'return', 'give back', 'charger', 'item']):
-                items_to_return = self.memory_manager.get_items_to_return()
-                items_to_receive = self.memory_manager.get_items_to_receive()
+                items_to_return = self.memory_manager.get_items_to_return(user_id)
+                items_to_receive = self.memory_manager.get_items_to_receive(user_id)
                 
                 response_parts = []
                 
@@ -473,7 +498,7 @@ Please provide a helpful response based on the user's query and available contex
             
             # Special handling for debt queries
             if any(word in query_lower for word in ['owe', 'debt', 'borrow', 'loan', 'money']):
-                debts = self.memory_manager.get_all_debts()
+                debts = self.memory_manager.get_all_debts(user_id)
                 if debts:
                     debt_list = []
                     for debt in debts:
@@ -500,7 +525,7 @@ Please provide a helpful response based on the user's query and available contex
                     # This might be about someone else's contact info from documents
                     # Let the main AI engine handle it with document context first
                     return None
-                contacts = self.memory_manager.get_all_contacts()
+                contacts = self.memory_manager.get_all_contacts(user_id)
                 if contacts:
                     contact_list = []
                     for contact in contacts:
@@ -515,11 +540,11 @@ Please provide a helpful response based on the user's query and available contex
                     }
             
             # Standard memory recall
-            memory = self.memory_manager.recall(key, category)
+            memory = self.memory_manager.recall(user_id, key, category)
             
             if not memory:
                 # Try fuzzy search
-                memories = self.memory_manager.search_memories(key)
+                memories = self.memory_manager.search_memories(user_id, key)
                 if memories:
                     memory = memories[0]['memory']
                     key = memories[0]['original_key']
@@ -528,7 +553,7 @@ Please provide a helpful response based on the user's query and available contex
             if memory:
                 # Export memories to vector store for future queries
                 if self.vector_store:
-                    self.memory_manager.export_memories_to_vector(self.vector_store)
+                    self.memory_manager.export_memories_to_vector(self.vector_store, user_id)
                 
                 response_text = f"📝 **{key.replace('_', ' ').title()}**: {memory['value']}"
                 if memory.get('description'):
@@ -541,7 +566,7 @@ Please provide a helpful response based on the user's query and available contex
                 }
             else:
                 # Show available memories
-                all_memories = self.memory_manager.search_memories("")
+                all_memories = self.memory_manager.search_memories("", user_id)
                 if all_memories:
                     # Group by category
                     by_category = {}
@@ -576,17 +601,17 @@ Please provide a helpful response based on the user's query and available contex
                 'confidence': 0.0
             }
     
-    def _enhance_context_with_memories(self, context: List[Dict], query: str) -> List[Dict]:
+    def _enhance_context_with_memories(self, context: List[Dict], query: str, user_id: str = None) -> List[Dict]:
         """Enhance context with personal memories"""
         if not self.memory_manager:
             return context
         
         # Export memories to vector store for this query
-        self.memory_manager.export_memories_to_vector(self.vector_store)
+        self.memory_manager.export_memories_to_vector(self.vector_store, user_id)
         
         return context
 
-    def _enhance_context_with_recent_actions(self, context: List[Dict], query: str) -> List[Dict]:
+    def _enhance_context_with_recent_actions(self, context: List[Dict], query: str, user_id: str = None) -> List[Dict]:
         """Enhance context with information about recent actions"""
         enhanced_context = context.copy()
         
@@ -602,7 +627,7 @@ Please provide a helpful response based on the user's query and available contex
             if recent_images:
                 # Create a special context entry for recent images
                 recent_images_context = {
-                    'content': f"RECENT IMAGES INFO: The user recently ingested these images: {[img['file_name'] for img in recent_images]}. The most recent is '{recent_images[0]['file_name']}'.",
+                    'content': f"RECENT IMAGES INFO: The user {user_id}'s recently ingested these images: {[img['file_name'] for img in recent_images]}. The most recent is '{recent_images[0]['file_name']}'.",
                     'metadata': {'file_path': 'system_recent_actions', 'file_type': 'system'},
                     'distance': 0
                 }
@@ -652,17 +677,17 @@ Please provide a helpful response based on the user's query and available contex
         
         return context_text
 
-    def _prepare_conversation_history(self, history: List[Dict]) -> str:
-        """Prepare conversation history"""
-        if not history:
-            return "No previous conversation in this session."
+    # def _prepare_conversation_history(self, history: List[Dict]) -> str:
+    #     """Prepare conversation history"""
+    #     if not history:
+    #         return "No previous conversation in this session."
         
-        history_text = "PREVIOUS CONVERSATION:\n"
-        for msg in history[-4:]:  # Last 4 messages for context
-            role = "USER" if msg['role'] == 'user' else "ASSISTANT"
-            history_text += f"{role}: {msg['content']}\n"
+    #     history_text = "PREVIOUS CONVERSATION:\n"
+    #     for msg in history[-4:]:  # Last 4 messages for context
+    #         role = "USER" if msg['role'] == 'user' else "ASSISTANT"
+    #         history_text += f"{role}: {msg['content']}\n"
         
-        return history_text
+    #     return history_text
 
     def _call_openai(self, system_prompt: str, prompt: str, context: List[Dict]) -> Dict[str, Any]:
         """Call OpenAI API"""

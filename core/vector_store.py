@@ -12,8 +12,8 @@ class VectorStore:
         self.collection = self.client.get_or_create_collection("second_brain")
         self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
     
-    def add_documents(self, documents: List[Dict[str, Any]]) -> bool:
-        """Add documents to vector store"""
+    def add_documents(self, documents: List[Dict[str, Any]], user_id: str = None) -> bool:
+        """Add documents to vector store with user filtering"""
         try:
             ids = []
             embeddings = []
@@ -29,10 +29,12 @@ class VectorStore:
                     embedding = self.embedding_model.encode(chunk).tolist()
                     embeddings.append(embedding)
                     
-                    # Prepare metadata
+                    # Prepare metadata with user_id
                     metadata = doc['metadata'].copy()
                     metadata['chunk_index'] = i
                     metadata['chunk_count'] = len(doc['chunks'])
+                    if user_id:
+                        metadata['user_id'] = user_id  # Add user_id to metadata
                     metadatas.append(metadata)
                     
                     documents_text.append(chunk)
@@ -50,11 +52,17 @@ class VectorStore:
             print(f"Error adding documents to vector store: {str(e)}")
             return False
     
-    def search(self, query: str, n_results: int = 5, filters: Dict = None) -> List[Dict]:
-        """Search for similar documents"""
+    def search(self, query: str, n_results: int = 5, filters: Dict = None, user_id: str = None) -> List[Dict]:
+        """Search for similar documents with user filtering"""
         try:
             # Generate query embedding
             query_embedding = self.embedding_model.encode(query).tolist()
+            
+            # Add user filter if user_id is provided
+            if user_id and filters:
+                filters = {"$and": [filters, {"user_id": user_id}]}
+            elif user_id:
+                filters = {"user_id": user_id}
             
             # Perform search
             results = self.collection.query(
@@ -77,6 +85,40 @@ class VectorStore:
         except Exception as e:
             print(f"Error searching vector store: {str(e)}")
             return []
+    
+    def get_user_documents(self, user_id: str):
+        """Get all documents for a specific user"""
+        try:
+            results = self.collection.get(
+                where={"user_id": user_id}
+            )
+            return results
+        except Exception as e:
+            print(f"Error getting user documents: {str(e)}")
+            return []
+    
+    def delete_user_document(self, filename: str, user_id: str) -> bool:
+        """Delete a specific document for a user"""
+        try:
+            results = self.collection.get()
+            
+            ids_to_delete = []
+            for doc_id, metadata in zip(results['ids'], results['metadatas']):
+                if (filename in metadata.get('file_name', '') and 
+                    metadata.get('user_id') == user_id):
+                    ids_to_delete.append(doc_id)
+            
+            if ids_to_delete:
+                self.collection.delete(ids=ids_to_delete)
+                print(f"✅ Deleted {len(ids_to_delete)} chunks of '{filename}' for user {user_id}")
+                return True
+            else:
+                print(f"❌ No documents found matching '{filename}' for user {user_id}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error deleting document: {e}")
+            return False
     
     def get_collection_stats(self) -> Dict:
         """Get statistics about the vector store"""

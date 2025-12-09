@@ -1,7 +1,7 @@
 # main.py
 import os
 import sys
-from typing import Dict, Any
+from typing import Dict, List, Any
 from core.data_ingestor import DataIngestor
 from core.vector_store import VectorStore
 from core.ai_engine import AIEngine
@@ -10,6 +10,7 @@ from interfaces.chat_interface import ChatInterface
 from utils.data_visualizer import DataVisualizer
 from utils.data_manager import DataManager
 from config.settings import settings
+from datetime import datetime
 
 class SecondBrain:
     def __init__(self):
@@ -37,88 +38,123 @@ class SecondBrain:
         # self.conversation_history = []
 
         # User-specific conversation history
-        self.user_conversations = {}
+        self.user_conversations = {} # Dictionary: user_id -> list of messages
         
         print("🚀 The Second Brain initialized successfully!")
-        stats = self.vector_store.get_collection_stats()
-        memory_stats = self.memory_manager.get_memory_stats()
-        print(f"📊 Vector store contains {stats['count']} document chunks")
-        print(f"💾 Memory system contains {memory_stats['total_memories']} personal memories")
+        # stats = self.vector_store.get_collection_stats()
+        # memory_stats = self.memory_manager.get_memory_stats()
+        # print(f"📊 Vector store contains {stats['count']} document chunks")
+        # print(f"💾 Memory system contains {memory_stats['total_memories']} personal memories")
     
-    def ingest_data(self, file_path: str, metadata: Dict = None):
-        """Ingest new data into the system"""
+    def ingest_data(self, file_path: str, metadata: Dict = None, user_id: str = None):
+        """Ingest new data into the system for a specific user"""
         if not os.path.exists(file_path):
             print(f"❌ File not found: {file_path}")
             return
             
-        print(f"📥 Ingesting: {file_path}")
+        print(f"📥 Ingesting for user {user_id}: {file_path}")
         result = self.data_ingestor.ingest_file(file_path, metadata)
         
         if result:
-            success = self.vector_store.add_documents([result])
+            # Add user_id to metadata
+            if user_id and 'metadata' in result:
+                result['metadata']['user_id'] = user_id
+            
+            success = self.vector_store.add_documents([result], user_id=user_id)
             if success:
-                print(f"✅ Successfully ingested: {file_path}")
+                print(f"✅ Successfully ingested for user {user_id}: {file_path}")
                 print(f"📝 Extracted {len(result['chunks'])} chunks of knowledge")
                 
                 # Track this action in AI engine
                 file_name = os.path.basename(file_path)
                 file_ext = os.path.splitext(file_path)[1].lower()
-                self.ai_engine.add_recent_action('ingest', {
+                self.ai_engine.add_user_recent_action(user_id, 'ingest', {
                     'file_name': file_name,
                     'file_type': file_ext,
-                    'content_preview': result['content'][:100] + '...' if len(result['content']) > 100 else result['content']
+                    'content_preview': result['content'][:100] + '...' if len(result['content']) > 100 else result['content'],
+                    'user_id': user_id
                 })
             else:
                 print(f"❌ Failed to add to vector store: {file_path}")
         else:
             print(f"❌ Failed to process: {file_path}")
 
-    def get_user_history(self, user_id):
+    def get_user_history(self, user_id: str) -> List[Dict]:
         """Get conversation history for a specific user"""
         if user_id not in self.user_conversations:
             self.user_conversations[user_id] = []
         return self.user_conversations[user_id]
     
+    def clear_user_history(self, user_id: str) -> None:
+        """Clear conversation history for a specific user"""
+        if user_id in self.user_conversations:
+            self.user_conversations[user_id] = []
+    
+    def add_to_user_history(self, user_id: str, role: str, content: str) -> None:
+        """Add a message to user's conversation history"""
+        if user_id not in self.user_conversations:
+            self.user_conversations[user_id] = []
+        
+        self.user_conversations[user_id].append({
+            "role": role,
+            "content": content,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Keep history manageable (last 20 messages)
+        if len(self.user_conversations[user_id]) > 20:
+            self.user_conversations[user_id] = self.user_conversations[user_id][-20:]
+    
     def query(self, question: str, use_history: bool = True, user_id: str = None) -> Dict[str, Any]:
         """Query The Second Brain with user context"""
-        print(f"🔍 {'User ' + user_id if user_id else 'Anonymous'} querying: {question[:50]}...")
+        if not user_id:
+            print("⚠️ Warning: Query without user_id - using anonymous session")
+            user_id = "anonymous"
+        
+        print(f"🔍 User {user_id} querying: {question[:50]}...")
 
         # Get user-specific conversation history
         if user_id and use_history:
             conversation_history = self.get_user_history(user_id)
         else:
-            conversation_history = None
+            conversation_history = []
         
-        # Track this query action
-        self.ai_engine.add_recent_action('query', {
+        # Track this query action WITH USER CONTEXT
+        self.ai_engine.add_user_recent_action(user_id, 'query', {
             'query': question,
             'user_id': user_id,
-            'timestamp': 'now'
+            'timestamp': datetime.now().isoformat()
         })
 
         # Export memories to vector store BEFORE searching
         # This ensures both documents and memories are available for context
-        self.memory_manager.export_memories_to_vector(self.vector_store)
+        if user_id and user_id != "anonymous":
+            self.memory_manager.export_memories_to_vector(self.vector_store, user_id)
         
-        # Search vector store
-        search_results = self.vector_store.search(question, n_results=5)
+        # Search vector store with user filter
+        search_results = []
+        if user_id and user_id != "anonymous":
+            search_results = self.vector_store.search(question, n_results=5, user_id=user_id)
+        else:
+            search_results = self.vector_store.search(question, n_results=5)
         
         # Generate response
         # history = self.conversation_history if use_history else None
-        response = self.ai_engine.generate_response(question, search_results, conversation_history)
-        
+        response = self.ai_engine.generate_response(
+            question, 
+            search_results, 
+            conversation_history,
+            user_id=user_id  # Pass user_id to AI engine
+        )
+
         # Update conversation history
         # self.conversation_history.append({"role": "user", "content": question})
         # self.conversation_history.append({"role": "assistant", "content": response['response']})
         
         # Update user-specific conversation history
         if user_id:
-            self.user_conversations[user_id].append({"role": "user", "content": question})
-            self.user_conversations[user_id].append({"role": "assistant", "content": response['response']})
-            
-            # Keep history manageable
-            if len(self.user_conversations[user_id]) > 20:
-                self.user_conversations[user_id] = self.user_conversations[user_id][-20:]
+            self.add_to_user_history(user_id, "user", question)
+            self.add_to_user_history(user_id, "assistant", response['response'])
         
         return response
     
@@ -175,18 +211,18 @@ class SecondBrain:
             else:
                 print("❌ Invalid choice")
     
-    def show_memories(self):
+    def show_memories(self, user_id: str = None):
         """Show all stored memories with better organization"""
-        memories = self.memory_manager.list_memories()
-        stats = self.memory_manager.get_memory_stats()
+        memories = self.memory_manager.list_memories(user_id)
+        stats = self.memory_manager.get_memory_stats(user_id)
         
         print("\n💾 PERSONAL MEMORIES")
         print("=" * 60)
         print(f"Total memories: {stats['total_memories']}")
         
         # Show borrowed items
-        items_to_return = self.memory_manager.get_items_to_return()
-        items_to_receive = self.memory_manager.get_items_to_receive()
+        items_to_return = self.memory_manager.get_items_to_return(user_id)
+        items_to_receive = self.memory_manager.get_items_to_receive(user_id)
         
         if items_to_return:
             print(f"\n📦 ITEMS YOU NEED TO RETURN:")
@@ -203,7 +239,7 @@ class SecondBrain:
                 print(f"   • {item_name} from {person.title()}")
         
         # Show debts separately
-        debts = self.memory_manager.get_all_debts()
+        debts = self.memory_manager.get_all_debts(user_id)
         if debts:
             print(f"\n💰 DEBTS OWED TO YOU:")
             for debt in debts:
@@ -212,7 +248,7 @@ class SecondBrain:
                 print(f"   • {person.title()}: {amount} rupees")
         
         # Show contacts separately
-        contacts = self.memory_manager.get_all_contacts()
+        contacts = self.memory_manager.get_all_contacts(user_id)
         if contacts:
             print(f"\n📞 CONTACTS:")
             for contact in contacts:
@@ -237,7 +273,7 @@ class SecondBrain:
         """Handle memorize commands directly"""
         return self.ai_engine._handle_memorize_command(command) is not None
 
-    def interactive_chat_with_memory_management(self):
+    def interactive_chat_with_memory_management(self, user_id: str = "default_user"):
         """Enhanced chat interface with memory management commands"""
         print("\n" + "="*70)
         print("🤖 The Second Brain - Memory Enhanced Chat Mode")
@@ -281,10 +317,10 @@ class SecondBrain:
                     self.ingest_data(file_path)
                 elif user_input.startswith('delete '):
                     filename = user_input[7:].strip()
-                    self.manager.delete_document(filename)
+                    self.manager.delete_document(filename, user_id)
                 elif user_input.startswith('forget '):
                     memory_key = user_input[7:].strip()
-                    self.memory_manager.forget(memory_key)
+                    self.memory_manager.forget(user_id, memory_key)
                 elif user_input.startswith('search '):
                     search_term = user_input[7:].strip()
                     results = self.visualizer.search_documents(search_term)

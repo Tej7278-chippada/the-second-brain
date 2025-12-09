@@ -9,29 +9,34 @@ class DataManager:
         self.vector_store = vector_store
         self.data_ingestor = data_ingestor
     
-    def delete_document(self, filename: str) -> bool:
-        """Delete all chunks of a specific document"""
-        try:
-            # Get all documents to find matching ones
-            results = self.vector_store.collection.get()
+    def delete_document(self, filename: str, user_id: str) -> bool:
+        """Delete all chunks of a specific document for a user"""
+        # try:
+        #     # Get all documents to find matching ones
+        #     results = self.vector_store.collection.get()
             
-            ids_to_delete = []
-            for doc_id, metadata in zip(results['ids'], results['metadatas']):
-                if (filename in metadata.get('file_name', '') or 
-                    filename in metadata.get('file_path', '')):
-                    ids_to_delete.append(doc_id)
+        #     ids_to_delete = []
+        #     for doc_id, metadata in zip(results['ids'], results['metadatas']):
+        #         if (filename in metadata.get('file_name', '') or 
+        #             filename in metadata.get('file_path', '')):
+        #             ids_to_delete.append(doc_id)
             
-            if ids_to_delete:
-                self.vector_store.collection.delete(ids=ids_to_delete)
-                print(f"✅ Deleted {len(ids_to_delete)} chunks of '{filename}'")
-                return True
-            else:
-                print(f"❌ No documents found matching '{filename}'")
-                return False
+        #     if ids_to_delete:
+        #         self.vector_store.collection.delete(ids=ids_to_delete)
+        #         print(f"✅ Deleted {len(ids_to_delete)} chunks of '{filename}'")
+        #         return True
+        #     else:
+        #         print(f"❌ No documents found matching '{filename}'")
+        #         return False
                 
-        except Exception as e:
-            print(f"❌ Error deleting document: {e}")
-            return False
+        # except Exception as e:
+        #     print(f"❌ Error deleting document: {e}")
+        #     return False
+        return self.vector_store.delete_user_document(filename, user_id)
+    
+    def get_user_documents(self, user_id: str):
+        """Get all documents for a specific user"""
+        return self.vector_store.get_user_documents(user_id)
     
     def delete_all_documents(self) -> bool:
         """Delete all documents (reset the knowledge base)"""
@@ -53,23 +58,23 @@ class DataManager:
             print(f"❌ Error deleting all documents: {e}")
             return False
     
-    def update_document(self, file_path: str) -> bool:
-        """Update a document by re-ingesting it"""
+    def update_document(self, file_path: str, user_id: str) -> bool:
+        """Update a document by re-ingesting it for a specific user"""
         try:
             # First delete the old version
             filename = os.path.basename(file_path)
-            self.delete_document(filename)
+            self.delete_document(filename, user_id)
             
-            # Then re-ingest
+            # Then re-ingest with user context
             result = self.data_ingestor.ingest_file(file_path)
             if result:
-                success = self.vector_store.add_documents([result])
+                success = self.vector_store.add_documents([result], user_id=user_id)
                 if success:
-                    print(f"✅ Successfully updated: {filename}")
+                    print(f"✅ Successfully updated for user {user_id}: {filename}")
                     return True
             return False
         except Exception as e:
-            print(f"❌ Error updating document: {e}")
+            print(f"❌ Error updating document for user {user_id}: {e}")
             return False
     
     def show_document_details(self, filename: str):

@@ -11,14 +11,14 @@ class DataVisualizer:
     def __init__(self, vector_store):
         self.vector_store = vector_store
     
-    def show_all_documents(self) -> List[Dict]:
-        """Show all ingested documents with statistics"""
+    def show_all_documents(self, user_id: str = None) -> List[Dict]:
+        """Show all ingested documents with statistics for a specific user"""
         try:
-            # Get collection stats
-            stats = self.vector_store.get_collection_stats()
-            
-            # Get all documents from ChromaDB
-            results = self.vector_store.collection.get()
+            # Get all documents from ChromaDB with optional user filter
+            if user_id:
+                results = self.vector_store.collection.get(where={"user_id": user_id})
+            else:
+                results = self.vector_store.collection.get()
             
             documents = []
             if results['documents']:
@@ -35,11 +35,12 @@ class DataVisualizer:
                         'file_size': metadata.get('file_size', 'Unknown'),
                         'ingestion_time': metadata.get('ingestion_time', 'Unknown'),
                         'chunk_index': metadata.get('chunk_index', 0),
-                        'total_chunks': metadata.get('chunk_count', 1)
+                        'total_chunks': metadata.get('chunk_count', 1),
+                        'user_id': metadata.get('user_id', 'unknown')
                     })
             
             return {
-                'total_chunks': stats['count'],
+                'total_chunks': len(documents),
                 'unique_files': len(set(doc['file_name'] for doc in documents)),
                 'documents': documents
             }
