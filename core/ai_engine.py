@@ -102,7 +102,7 @@ class AIEngine:
             # Prepare conversation history with user-specific context
             history_text = self._prepare_conversation_history(conversation_history, user_id)
             
-            # Enhanced system prompt with user context
+            # Enhanced system prompt with memory instructions user context
             system_prompt = f"""You are "The Second Brain" - a personal AI assistant that has access to all of the user's personal and professional information. 
             Your role is to help the user recall information, make connections between different pieces of knowledge, and provide intelligent responses based on their complete digital memory.
 
@@ -148,6 +148,24 @@ Please provide a helpful response based on the user's query and available contex
                 return self._call_openai(system_prompt, prompt, enhanced_context)
             else:
                 return self._fallback_response(query, enhanced_context)
+            
+# SPECIAL MEMORY FEATURES:
+# - The user can ask you to memorize information using commands like "memorize", "remember this", "store this"
+# - You have access to the user's personal memories (phone numbers, IDs, important info)
+# - When user asks about personal information, check the memory system first
+
+# MEMORY COMMANDS USER CAN USE:
+# - "memorize my phone number as 1234567890"
+# - "remember that my Aadhaar number is XXXX-XXXX-XXXX" 
+# - "store this: my car license plate is ABC123"
+# - "what's my phone number?"
+# - "show me my Aadhaar details"
+
+# SPECIAL INSTRUCTIONS FOR IMAGES:
+# - When user asks about "last given pic", "recent image", "previous image", etc., refer to the most recently ingested image
+# - When describing images, use the extracted OCR text and file metadata
+# - If multiple images exist, mention the most recent one first
+# - Provide detailed descriptions based on available text content
                 
         except Exception as e:
             print(f"❌ AI Engine Error: {e}")
@@ -197,14 +215,17 @@ Please provide a helpful response based on the user's query and available contex
         if any(keyword in query_lower for keyword in memorize_keywords):
             return self._handle_memorize_command(query, user_id)
         
-        # Check for recall commands
+        # Check for recall commands - more comprehensive patterns
         recall_patterns = [
+            # Direct questions about USER'S personal info
             (r'what is my (.*)', 'personal_info'),
             (r'what\'s my (.*)', 'personal_info'),
             (r'show me my (.*)', 'personal_info'),
             (r'tell me my (.*)', 'personal_info'),
             (r'what are my (.*)', 'personal_info'),
             (r'give me my (.*)', 'personal_info'),
+
+            # Specific personal items with flexible matching
             (r'.*my phone number.*', 'personal_info', 'phone_number'),
             (r'.*my aadhaar.*', 'personal_info', 'aadhaar_number'),
             (r'.*my aadhar.*', 'personal_info', 'aadhaar_number'),
@@ -213,6 +234,8 @@ Please provide a helpful response based on the user's query and available contex
             (r'.*my license.*', 'personal_info', 'license'),
             (r'.*my password.*', 'credentials', None),
             (r'.*my username.*', 'credentials', None),
+
+            # Generic "my X" pattern
             (r'my (.*)', 'personal_info'),
         ]
         
@@ -221,9 +244,11 @@ Please provide a helpful response based on the user's query and available contex
             if match:
                 key = extra[0] if extra else None
                 if not key:
+                    # Extract the key from the pattern match
                     if len(match.groups()) > 0:
                         key = match.group(1).replace(' ', '_')
                     else:
+                        # If no group captured, use the entire matched string
                         key = match.group(0).replace(' ', '_')
                 
                 return self._handle_recall_command(query, category, key, user_id)
@@ -424,7 +449,7 @@ Please provide a helpful response based on the user's query and available contex
             }
 
     def _handle_recall_command(self, query: str, category: str, key: str, user_id: str) -> Dict[str, Any]:
-        """Handle commands to recall information from memory for a specific user"""
+        """Handle commands to recall information from memory with better search for a specific user"""
         try:
             if not self.memory_manager:
                 return {
